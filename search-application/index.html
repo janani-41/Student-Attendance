@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Movie Recommender (OMDb)</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; margin: 20px; background:#f7f7f7; color:#222 }
+        .container { max-width:900px; margin:0 auto; }
+        input[type="text"] { flex:1; padding:8px; font-size:16px; }
+        button { padding:8px 12px; font-size:16px; }
+        .results { display:grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
+        .card { background:white; padding:10px; border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+        .poster { width:100%; height:300px; object-fit:cover; border-radius:4px; background:#eee; display:block; margin-bottom:8px; }
+        .detail { margin-top:12px; background:#fff; padding:12px; border-radius:6px; box-shadow:0 1px 6px rgba(0,0,0,.06) }
+        .small { font-size:13px; color:#666 }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Movie Recommendation (OMDb)</h2>
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <input id="q" type="text" placeholder="Search movie title, e.g. Inception" />
+            <button id="searchBtn">Search</button>
+        </div>
+        <div class="small">Click a movie card to view details. From details, click "Recommend similar".</div>
+
+        <div id="results" class="results" style="margin-top:12px"></div>
+        <div id="details" class="detail" style="display:none"></div>
+    </div>
+
+    <script>
+    const API_KEY = '35b23593'; // your OMDb API key
+
+    const qEl = document.getElementById('q');
+    const searchBtn = document.getElementById('searchBtn');
+    const resultsEl = document.getElementById('results');
+    const detailsEl = document.getElementById('details');
+
+    searchBtn.addEventListener('click', () => search(qEl.value.trim()));
+    qEl.addEventListener('keydown', e => { if (e.key === 'Enter') search(qEl.value.trim()); });
+
+    async function search(query) {
+        resultsEl.innerHTML = '';
+        detailsEl.style.display = 'none';
+        if (!query) return;
+        const url = `https://www.omdbapi.com/?apikey=${API_KEY}&s=${encodeURIComponent(query)}&type=movie`;
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data.Response === "True") renderResults(data.Search);
+            else resultsEl.innerHTML = `<div style="grid-column:1/-1;padding:12px">No results: ${escapeHtml(data.Error)}</div>`;
+        } catch {
+            resultsEl.innerHTML = `<div style="grid-column:1/-1;padding:12px">Network error</div>`;
+        }
+    }
+
+    function renderResults(items) {
+        resultsEl.innerHTML = '';
+        items.forEach(item => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+                <img class="poster" src="${item.Poster !== 'N/A' ? item.Poster : 'https://via.placeholder.com/300x450?text=No+Poster'}" alt="${escapeHtml(item.Title)}">
+                <div><strong>${escapeHtml(item.Title)}</strong></div>
+                <div class="small">${escapeHtml(item.Year)} • ${escapeHtml(item.Type)}</div>
+                <button data-id="${item.imdbID}" style="width:100%;margin-top:8px">View details</button>
+            `;
+            card.querySelector('button').addEventListener('click', () => loadDetails(item.imdbID));
+            resultsEl.appendChild(card);
+        });
+    }
+
+    async function loadDetails(imdbID) {
+        detailsEl.style.display = 'block';
+        detailsEl.innerHTML = 'Loading details...';
+        const url = `https://www.omdbapi.com/?apikey=${API_KEY}&i=${imdbID}&plot=full`;
+        try {
+            const res = await fetch(url);
+            const movie = await res.json();
+            if (movie.Response !== "True") { detailsEl.innerHTML = `Error: ${escapeHtml(movie.Error)}`; return; }
+            const genres = movie.Genre ? movie.Genre.split(',').map(g => g.trim()) : [];
+            detailsEl.innerHTML = `
+                <div style="display:flex; gap:12px; align-items:flex-start;">
+                    <img src="${movie.Poster !== 'N/A' ? movie.Poster : 'https://via.placeholder.com/200x300?text=No+Poster'}" alt="${escapeHtml(movie.Title)}" style="width:200px; border-radius:6px">
+                    <div>
+                        <h3 style="margin:0">${escapeHtml(movie.Title)} (${escapeHtml(movie.Year)})</h3>
+                        <div class="small">${escapeHtml(movie.Rated || '')} • ${escapeHtml(movie.Runtime || '')} • ${escapeHtml(movie.Genre || '')}</div>
+                        <p style="margin-top:8px">${escapeHtml(movie.Plot || '')}</p>
+                        <div class="small">Director: ${escapeHtml(movie.Director || 'N/A')} • Actors: ${escapeHtml(movie.Actors || 'N/A')}</div>
+                        <div style="margin-top:10px"><button id="recBtn">Recommend similar</button></div>
+                    </div>
+                </div>
+                <div id="recs" class="recommendations"></div>
+            `;
+            document.getElementById('recBtn').addEventListener('click', () => recommendByGenre(genres));
+        } catch {
+            detailsEl.innerHTML = 'Network error loading details';
+        }
+    }
+
+    async function recommendByGenre(genres) {
+        const recsEl = document.getElementById('recs');
+        recsEl.innerHTML = 'Loading recommendations...';
+        if (!genres || genres.length === 0) { recsEl.innerHTML = 'No genre information available.'; return; }
+        const keyword = genres[0].split(' ')[0];
+        const url = `https://www.omdbapi.com/?apikey=${API_KEY}&s=${encodeURIComponent(keyword)}&type=movie`;
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data.Response !== "True") { recsEl.innerHTML = `No recommendations: ${escapeHtml(data.Error)}`; return; }
+            const list = data.Search.slice(0,6);
+            recsEl.innerHTML = '<h4>Recommendations</h4>';
+            const grid = document.createElement('div');
+            grid.style.display = 'grid';
+            grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(140px,1fr))';
+            grid.style.gap = '8px';
+            list.forEach(m => {
+                const el = document.createElement('div');
+                el.style.background = '#fff';
+                el.style.borderRadius = '6px';
+                el.style.padding = '6px';
+                el.style.boxShadow = '0 1px 4px rgba(0,0,0,.06)';
+                el.innerHTML = `
+                    <img src="${m.Poster !== 'N/A' ? m.Poster : 'https://via.placeholder.com/140x200?text=No+Poster'}" style="width:100%;height:180px;object-fit:cover;border-radius:4px">
+                    <div style="font-size:13px;margin-top:6px"><strong>${escapeHtml(m.Title)}</strong></div>
+                    <div class="small">${escapeHtml(m.Year)}</div>
+                `;
+                el.addEventListener('click', () => loadDetails(m.imdbID));
+                grid.appendChild(el);
+            });
+            recsEl.appendChild(grid);
+        } catch {
+            recsEl.innerHTML = 'Network error fetching recommendations';
+        }
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+    }
+    </script>
+</body>
+</html>
